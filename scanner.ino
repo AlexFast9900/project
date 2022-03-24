@@ -6,18 +6,18 @@
 #include <ESP8266WiFi.h>
 #include <WiFiClientSecure.h>
 #include <UniversalTelegramBot.h>
-#include "SoftServo.h"
+#include <Servo.h>
 
 LiquidCrystal_I2C lcd(0x27, 16, 2);
 
 //--------------Wi-Fi------------------
-const char* ssid = "******"; // Название сети Wi-Fi (Вместо звёздочек)
-const char* password = "*******"; // Пароль от сети Wi-Fi (Вместо звёздочек)
+const char* ssid = "test"; // Название сети Wi-Fi (Вместо звёздочек)
+const char* password = "testtest"; // Пароль от сети Wi-Fi (Вместо звёздочек)
 //-------------------------------------
 
 unsigned long bot_lasttime;
 const unsigned long BOT_MTBS = 500;
-bool system_mode = 0, solar_mode = 0, windmill_mode = 0;
+bool system_mode = 0, solar_mode = 0, windmill_mode = 0, led_mode = 0;
 int light = -1, wind = -1;
 
 const char BotToken[] = "1904336275:AAF7OqAX4SyrhmGq1xzx-dGAo4AsEu4csWQ"; // Токен бота телеграм @RafflesSNKRSBot
@@ -25,7 +25,8 @@ X509List cert(TELEGRAM_CERTIFICATE_ROOT);
 WiFiClientSecure secured_client;
 UniversalTelegramBot bot (BotToken, secured_client);
 
-SoftServo servos[3]; // Создаём массив серво-моторов
+int relay = D8;
+Servo servos[3]; // Создаём массив серво-моторов
 RF24 radio(2, 4); // порты D9, D10: CSN CE для радиомодуля
 const uint32_t pipe = 111156789; // адрес рабочей трубы;
 byte data[5]; // Массив для приёма данных
@@ -53,6 +54,7 @@ void handleNewMessages(int numNewMessages) // Функция бота телег
       else{
         system_mode = 1;
         bot.sendMessage(chat_id, "Manual control mode is successfully enabled!", "");
+        lcd.setCursor(15, 1); lcd.print("H");
       }
     }
 
@@ -64,6 +66,7 @@ void handleNewMessages(int numNewMessages) // Функция бота телег
       else{
         system_mode = 0;
         bot.sendMessage(chat_id, "Automatic control mode is successfully enabled!", "");
+        lcd.setCursor(15, 1); lcd.print("A");
       }
     }
 
@@ -109,6 +112,21 @@ void handleNewMessages(int numNewMessages) // Функция бота телег
         }
       }
     }
+    if (text == "/led"){
+      if(system_mode == 0){
+        bot.sendMessage(chat_id, "‼️It is impossible to control the system while it is in automatic mode.\n\nPlease use /hand to switch to manual control.", "");
+      }
+      else{
+        if(led_mode == 0){
+          led_mode = 1;
+          bot.sendMessage(chat_id, "LED ON!", "");
+        }
+        else{
+          led_mode = 0;
+          bot.sendMessage(chat_id, "LED OFF!", "");
+        }
+      }
+    }
     if (text == "/start")
     {
       String welcome = "Welcome to the distributed information and control system of power supply and lighting, " + from_name + ".\n";
@@ -122,6 +140,8 @@ void handleNewMessages(int numNewMessages) // Функция бота телег
 }
 
 void setup() {
+  pinMode(relay, OUTPUT);
+  digitalWrite(relay, LOW);
   lcd.begin(D1,D3);
   lcd.backlight();
   lcd.setCursor(2, 0);
@@ -164,7 +184,49 @@ void setup() {
   lcd.clear();
   lcd.setCursor(0, 0); lcd.print("Light level -");
   lcd.setCursor(0, 1); lcd.print("Wind level -");
-  servos[0].attach(16); servos[1].attach(3); servos[2].attach(1);
+  servos[0].attach(D0); servos[1].attach(3); servos[2].attach(1);
+  servos[0].write(90); servos[1].write(0); servos[2].write(0); // M3 - лево/право, M1 - ветряк, M2 - верх/низ
+  lcd.setCursor(15, 1); lcd.print("A");
+}
+
+void follow_light(int vl, int vp, int nl, int np){
+  int v = (vl + vp)/2, n = (nl+np)/2; 
+  if((v-n)>50){
+    int x;
+    x=(180*(v-n))/250;
+    servos[2].write(x); // x=(180*(v-n))/250
+  }
+  else if((n-v)>50){
+    int x;
+    x = 180-((180*(n-v))/250);
+    servos[2].write(x);
+  }
+  else{
+    servos[2].write(90);
+  }
+  int l = (vl+nl)/2, r = (vp+np)/2;
+  if((l-r)>50){
+    int x;
+    x=(180*(l-r))/250;
+    servos[0].write(x); // x=(180*(v-n))/250
+  }
+  else if((r-l)>50){
+    int x;
+    x = 180-((180*(r-l))/250);
+    servos[0].write(x);
+  }
+  else{
+    servos[0].write(90);
+  }
+}
+void fold_panel(){
+  servos[0].write(90);
+  servos[2].write(180); // ИЛИ 0, Я НЕ МОГУ ТЕСТИРОВАТЬ!!!!!!!! ЕСЛИ ЧТО ПОМЕНЯТЬ НА 0!!!!!!!!
+}
+
+void unfold_panel(){
+  servos[0].write(90);
+  servos[2].write(90);
 }
 
 void loop() {
@@ -183,6 +245,7 @@ void loop() {
     bot_lasttime = millis();
   }
   //-------------Приём данных по радиоканалу-----------------
+  int solar_data[4] = {0, 0, 0, 0};
   if (scn < 1000)
   {
     if (radio.available())
@@ -192,6 +255,7 @@ void loop() {
       Serial.println(" " + String(data[1]) + " " + String(data[2]) + " " + String(data[3]) + " " + String(data[4]));
       if(data[0]==0){
         light = (data[1] + data[2] + data[3] + data[4])/4; // Присваиваем среднее значение света с 4 фоторезисторов
+        solar_data[0] = data[3]; solar_data[1] = data[4]; solar_data[2] = data[2]; solar_data[3] = data[1];
         lcd.setCursor(12, 0);
         lcd.print("   ");
         lcd.setCursor(12, 0);
@@ -218,10 +282,7 @@ void loop() {
         lcd.print("-");
       }
       if(sg1==0){
-        lcd.setCursor(11, 1);
-        lcd.print("   ");
-        lcd.setCursor(11, 1);
-        lcd.print("-");
+        lcd.setCursor(11, 1); lcd.print("   "); lcd.setCursor(11, 1); lcd.print("-");
       }
       sg0 = 0;
       sg1 = 0;
@@ -236,36 +297,52 @@ void loop() {
     if(light < 100 && wind > 5){ // При темноте и сильном ветре
       solar_mode = 0; // Складывается солнечная панель
       windmill_mode = 1; // Ветрогенератор активен
-      // Горит свет
+      digitalWrite(relay, HIGH); // Горит свет
     }
     else if(light >= 100 && wind > 5){ // Светло и сильный ветер
       solar_mode = 0; // Складывается солнечная панель
       windmill_mode = 1; // Ветрогенератор активен
-      // НЕ горит свет
+      digitalWrite(relay, LOW); // НЕ горит свет
     }
     else if(light >= 100 && wind < 5){ // Светло и слабый ветер
       windmill_mode = 0; // Блокировка ветрогенератора
       solar_mode = 1; // Раскладывается солнечная панель
-      // НЕ горит свет
+      follow_light(solar_data[0], solar_data[1], solar_data[2], solar_data[3]);
+      digitalWrite(relay, LOW); // НЕ горит свет
     }
     else if(light < 100 && wind < 5){
       solar_mode = 0; // Складывается солнечная панель
       windmill_mode = 0; // Ветрогенератор НЕ активен
-      // Горит свет
+      digitalWrite(relay, HIGH); // Горит свет
+    }
+    if(solar_mode == 0){
+      fold_panel();
+    }
+    if(windmill_mode == 0){
+      servos[1].write(180);
+    }
+    else{
+      servos[1].write(0);
     }
   }
   else{ // Управление в ручном режиме
     if(windmill_mode == 0){
-      // Сервопривод блокирует лопасти
+      servos[1].write(180); // Сервопривод блокирует лопасти
     }
     else{
-      // Сервопривод НЕ блокирует лопасти
+      servos[1].write(0); // Сервопривод НЕ блокирует лопасти
     }
     if(solar_mode == 0){
-      // Сервоприводы складывают солнечную панель
+      fold_panel(); // Сервоприводы складывают солнечную панель
     }
     else{
-      // Сервоприводы РАСКЛАДЫВАЮТ солнечную панель
+      unfold_panel();// Сервоприводы РАСКЛАДЫВАЮТ солнечную панель
+    }
+    if(led_mode == 0){
+      digitalWrite(relay, LOW);
+    }
+    else{
+      digitalWrite(relay, HIGH);
     }
   }
 }
