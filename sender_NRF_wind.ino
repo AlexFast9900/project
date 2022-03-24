@@ -2,7 +2,7 @@
 EncButton<EB_TICK, A0, A1> enc;
 #include <SPI.h>
 #include <RF24.h>
-RF24 radio(8, 9); // порты D9, D10: CSN CE
+RF24 radio(6, 7); // порты D9, D10: CSN CE
 const uint32_t pipe = 111156789; // адрес рабочей трубы;
 
 byte data[5];
@@ -20,12 +20,28 @@ void setup() {
   radio.powerUp();               // включение или пониженное потребление powerDown - powerUp
   radio.stopListening();  //радиоэфир не слушаем, только передача
   radio.openWritingPipe(pipe);   // открыть трубу на отправку
+  pinMode(A4, INPUT);
 }
-
+bool flag = 0;
 void loop() {
-  data[0] = 1;
-  data[1] = random(0); data[2] = -1; data[3] = -1; data[4] = -1;
+  int sensorValue = digitalRead(A4);
+  //Serial.print("Hall Sensor = " );        // Выводим текст
+  //Serial.println(sensorValue);
+  int count = 0; 
+  for(int i=0; i<1000; i++){ // Считаем количество поворотов за 2 секунды
+    delay(1);
+    sensorValue = digitalRead(A4);
+    if(sensorValue == 0 && flag == 0){
+      count++; flag = 1; //Serial.println(sensorValue);
+    }
+    if(sensorValue == 1 && flag == 1){
+      flag = 0; //Serial.println(sensorValue);
+    }
+  }
+  //Serial.println("COUNT: " + String(count));
+  data[1] = count/2*5;
+  data[0] = 1; data[2] = -1; data[3] = -1; data[4] = -1;
   radio.write(&data, 5);
   Serial.println("data= " + String(data[1]));
-  delay(1000);
+  //delay(1000);
 }
