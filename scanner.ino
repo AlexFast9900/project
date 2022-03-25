@@ -11,8 +11,8 @@
 LiquidCrystal_I2C lcd(0x27, 16, 2);
 
 //--------------Wi-Fi------------------
-const char* ssid = "FedoraLinux"; // Название сети Wi-Fi (Вместо звёздочек)
-const char* password = "router_blin02"; // Пароль от сети Wi-Fi (Вместо звёздочек)
+const char* ssid = "test"; // Название сети Wi-Fi (Вместо звёздочек)
+const char* password = "testtest"; // Пароль от сети Wi-Fi (Вместо звёздочек)
 //-------------------------------------
 
 unsigned long bot_lasttime;
